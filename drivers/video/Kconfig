@@ -2608,7 +2608,9 @@ config FB_MSM_LCDC_DSUB
 
 config FB_MSM_EXT_INTERFACE_COMMON
 	bool
-	default n
+	default y
+# jaeseong.gim 	10.09.16
+# for hdmi n->y
 
 config FB_MSM_HDMI_COMMON
 	bool

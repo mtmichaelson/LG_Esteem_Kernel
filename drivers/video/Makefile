@@ -150,3 +150,6 @@ obj-$(CONFIG_FB_VIRTUAL)          += vfb.o
 #video output switch sysfs driver
 obj-$(CONFIG_VIDEO_OUTPUT_CONTROL) += output.o
 
+# jaeseong.gim 	10.07.26 	hdmi
+obj-$(CONFIG_FB_MSM_DTV)	+= hdmi/
+
