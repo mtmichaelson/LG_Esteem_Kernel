@@ -91,6 +91,63 @@ task_notify_func(struct notifier_block *self, unsigned long val, void *data)
 	return NOTIFY_OK;
 }
 
+#ifdef CONFIG_LGE_ANDROID_LOW_MEMORY_KILLER_PATCH
+#define K(pages) ((pages) << (PAGE_SHIFT - 10))
+extern unsigned long global_reclaimable_pages(void);
+extern unsigned long zone_reclaimable_pages(struct zone *zone);
+extern int min_free_kbytes;
+
+unsigned long get_total_present_pages(void)
+{
+	int nid, zone_type;
+	unsigned long total_size = 0;
+	struct zone *z;
+	
+	for_each_online_node(nid) {
+		for (zone_type = 0; zone_type < MAX_NR_ZONES; zone_type++) {
+			z = &NODE_DATA(nid)->node_zones[zone_type];
+			if (populated_zone(z)) {
+				total_size += z->present_pages;
+			}
+		}
+	}
+
+	return total_size;
+}
+
+int check_oom_boundary(struct zone *zone, int array_size)
+{
+	int i;
+	int zone_free = zone_page_state(zone, NR_FREE_PAGES);
+	int zone_file = zone_page_state(zone, NR_FILE_PAGES) - zone_page_state(zone, NR_SHMEM);
+	//int zone_reclaimable = zone_reclaimable_pages(zone);
+	unsigned long zone_present = zone->present_pages;
+	unsigned long total_present =  get_total_present_pages();
+	//int min_free_page = min_free_kbytes>> (PAGE_SHIFT - 10);
+	int oom_adj = OOM_ADJUST_MAX + 1;
+
+	int proportional_min_free = 0;
+
+
+	for (i = 0; i < array_size; i++) {
+		// calculate proportioanl minfree to selecet specific value for eache zone
+		proportional_min_free = (int)(((unsigned long)lowmem_minfree[i]*zone_present)/total_present);
+		if ((zone_free < proportional_min_free) && (zone_file < proportional_min_free)){
+			// select one belower than the proper adj since it would have already been selected in normal cases.
+			if(i > 1)
+				oom_adj = lowmem_adj[i-1];
+			else
+				oom_adj = lowmem_adj[0];
+			break;
+		}
+	}
+
+	lowmem_print(3, "oom_adj : %d, prop_min:%lukB, free:%lukB, file_pages - shmem :%lukB\n", oom_adj, K(proportional_min_free), K(zone_free), K(zone_file));
+
+	return oom_adj;
+}
+#endif
+
 static int lowmem_shrink(struct shrinker *s, int nr_to_scan, gfp_t gfp_mask)
 {
 	struct task_struct *p;
@@ -103,7 +160,27 @@ static int lowmem_shrink(struct shrinker *s, int nr_to_scan, gfp_t gfp_mask)
 	int selected_oom_adj;
 	int array_size = ARRAY_SIZE(lowmem_adj);
 	int other_free = global_page_state(NR_FREE_PAGES);
+#ifdef CONFIG_LGE_ANDROID_LOW_MEMORY_KILLER_PATCH
+	struct zone *zone;
+	int zone_reclaimable = 0;
+	int oom_boundary_adj = OOM_ADJUST_MAX + 1;
+
+	// CAF patch for tmpfs -  NR_SHMEM pages are not be able to be used as NR_FILE_PAGES.
+	int other_file = global_page_state(NR_FILE_PAGES) - global_page_state(NR_SHMEM);
+
+	/*
+	 * to avoid too many oom-killer, check reclaimable page condition
+	 * Although lowmemorykiller got killed apks or selected adj well under the given condition, oom-killer is followed by sometime.
+	 */
+	int reclaimable_pages = global_reclaimable_pages();
+
+
+	gfp_t gfp_mask_zone = gfp_mask & GFP_ZONEMASK;
+	int rem_normal = 0, rem_movable = 0;
+	
+#else
 	int other_file = global_page_state(NR_FILE_PAGES);
+#endif
 	unsigned long flags;
 
 	/*
@@ -136,11 +213,19 @@ static int lowmem_shrink(struct shrinker *s, int nr_to_scan, gfp_t gfp_mask)
  * kernel/drivers/staging/android/lowmemorykiller.c
 */
 #if 1 //QCT SBA 404015
+#ifdef CONFIG_LGE_ANDROID_LOW_MEMORY_KILLER_PATCH
+		if (((other_free < lowmem_minfree[i]) && (other_file < lowmem_minfree[i])) 
+			||((other_free < lowmem_minfree[i]) && (reclaimable_pages < lowmem_minfree[i]))){
+			min_adj = lowmem_adj[i];
+			break;
+		}
+#else
 		if (other_free < lowmem_minfree[i] &&
 				other_file < lowmem_minfree[i]) {
 			min_adj = lowmem_adj[i];
 			break;
 		}
+#endif	
 #else
 		if (other_file < lowmem_minfree[i]) {
 			min_adj = lowmem_adj[i];
@@ -148,10 +233,68 @@ static int lowmem_shrink(struct shrinker *s, int nr_to_scan, gfp_t gfp_mask)
 		}
 #endif
 	}
+
+#ifdef CONFIG_LGE_ANDROID_LOW_MEMORY_KILLER_PATCH
+	/* in rare cases, proper adj would not be selected well especially there're avaliable memory in ZONE_MOVABLE.
+	 * adj will be calculated again by using propotional minfree of each zone.
+	 */
+	for_each_populated_zone(zone) {
+		zone_reclaimable = zone_reclaimable_pages(zone);
+		if(zone_reclaimable < (min_free_kbytes>> (PAGE_SHIFT - 10)))
+		{
+			lowmem_print(3, "%s : reached almost out of memoy condition\n", zone->name);
+			lowmem_print(3, "reclaimable :%lukB, min_free :%lukB\n", K(zone_reclaimable), min_free_kbytes);
+			oom_boundary_adj = check_oom_boundary(zone, array_size);
+			if(oom_boundary_adj < min_adj)
+			{
+				lowmem_print(3, "prev adj %d will be changed to %d\n", min_adj, oom_boundary_adj);
+				min_adj = oom_boundary_adj;
+			}
+		}
+	}
+
+#endif
+
 	if (nr_to_scan > 0)
 		lowmem_print(3, "lowmem_shrink %d, %x, ofree %d %d, ma %d\n",
 			     nr_to_scan, gfp_mask, other_free, other_file,
 			     min_adj);
+
+
+#ifdef CONFIG_LGE_ANDROID_LOW_MEMORY_KILLER_PATCH
+	for_each_populated_zone(zone) {
+		if(!strncmp(zone->name, "Normal", strlen("Normal") ))
+			rem_normal = zone_page_state(zone, NR_ACTIVE_ANON) +
+				zone_page_state(zone, NR_ACTIVE_FILE) +
+				zone_page_state(zone, NR_INACTIVE_ANON) +
+				zone_page_state(zone, NR_INACTIVE_FILE);
+		else if(!strncmp(zone->name, "Movable", strlen("Movable") ))
+			rem_movable = zone_page_state(zone, NR_ACTIVE_ANON) +
+				zone_page_state(zone, NR_ACTIVE_FILE) +
+				zone_page_state(zone, NR_INACTIVE_ANON) +
+				zone_page_state(zone, NR_INACTIVE_FILE);
+		else
+			rem += zone_page_state(zone, NR_ACTIVE_ANON) +
+				zone_page_state(zone, NR_ACTIVE_FILE) +
+				zone_page_state(zone, NR_INACTIVE_ANON) +
+				zone_page_state(zone, NR_INACTIVE_FILE);
+	}
+
+	if((gfp_mask_zone & (~__GFP_MOVABLE)) == __GFP_MOVABLE)
+	{
+		rem += rem_movable;
+	}
+	else
+	{
+		rem += rem_normal;
+	}
+
+	if (nr_to_scan <= 0 || min_adj == OOM_ADJUST_MAX + 1) {
+		lowmem_print(5, "lowmem_shrink %d, %x, return %d(%s)\n",
+			     nr_to_scan, gfp_mask, rem, (gfp_mask_zone & (~__GFP_MOVABLE)) == __GFP_MOVABLE?"M":"N");
+		return rem;
+	}
+#else
 	rem = global_page_state(NR_ACTIVE_ANON) +
 		global_page_state(NR_ACTIVE_FILE) +
 		global_page_state(NR_INACTIVE_ANON) +
@@ -161,6 +304,8 @@ static int lowmem_shrink(struct shrinker *s, int nr_to_scan, gfp_t gfp_mask)
 			     nr_to_scan, gfp_mask, rem);
 		return rem;
 	}
+#endif
+
 	selected_oom_adj = min_adj;
 
 	read_lock(&tasklist_lock);
@@ -213,8 +358,13 @@ static int lowmem_shrink(struct shrinker *s, int nr_to_scan, gfp_t gfp_mask)
 		}
 		spin_unlock_irqrestore(&lowmem_deathpending_lock, flags);
 	}
+#ifdef CONFIG_LGE_ANDROID_LOW_MEMORY_KILLER_PATCH
+	lowmem_print(4, "lowmem_shrink %d, %x, return %d(%s)\n",
+		 nr_to_scan, gfp_mask, rem, (gfp_mask_zone & (~__GFP_MOVABLE)) == __GFP_MOVABLE?"M":"N");
+#else
 	lowmem_print(4, "lowmem_shrink %d, %x, return %d\n",
 		     nr_to_scan, gfp_mask, rem);
+#endif
 	read_unlock(&tasklist_lock);
 	return rem;
 }

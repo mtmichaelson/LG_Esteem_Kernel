@@ -149,6 +149,14 @@ static ssize_t request_sync_cmd(struct device *dev, struct device_attribute *att
 		sync_cmd_data.cmd = cmd;
 		queue_work(sync_cmd_wq, &sync_cmd_data.work);
 	}
+#ifdef CONFIG_LGE_NOTIFY_RECOVERY_MODE
+	if (cmd == LGE_RECOVERY_NOTIFICATION)
+	{
+		printk(KERN_INFO "%s, received cmd : %ld, activate work queue to notify recovery mode\n", __func__, cmd);
+		sync_cmd_data.cmd = cmd;
+		queue_work(sync_cmd_wq, &sync_cmd_data.work);
+	}
+#endif
 }
 
 static DEVICE_ATTR(sync_cmd, 0220 , NULL, request_sync_cmd); //2011.07.28 - CTS FAIL android.permission.cts.FileSystemPermissionTest#testAllBlockDevicesAreNotReadableWritable
@@ -174,6 +182,15 @@ sync_cmd_func(struct work_struct *work)
 		case LGE_TESTMODE_MANUAL_TEST_INFO:
 			remote_rpc_request_val(sync_cmd_data.cmd, (char *)testmode_manual_mode_info, sizeof(testmode_manual_mode_info));
 			printk(KERN_INFO "%s, MANUAL MODE : %s\n", __func__, testmode_manual_mode_info);
+			break;
+#endif
+
+#ifdef CONFIG_LGE_NOTIFY_RECOVERY_MODE
+		case LGE_RECOVERY_NOTIFICATION:
+			if(remote_rpc_request(LGE_RECOVERY_NOTIFICATION) < 0)
+				printk(KERN_ERR "%s, rpc request failed\n", __func__);
+			else
+				printk(KERN_INFO "%s, sync request succeeded\n", __func__);
 			break;
 #endif
 		default:

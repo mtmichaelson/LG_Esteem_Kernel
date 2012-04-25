@@ -90,6 +90,13 @@ config ANDROID_LOW_MEMORY_KILLER
 	---help---
 	  Register processes to be killed when memory is low
 
+config LGE_ANDROID_LOW_MEMORY_KILLER_PATCH
+	bool "Android Low Memory Killer Patch"
+	depends on ANDROID_LOW_MEMORY_KILLER
+	default N
+	---help---
+	  adjust lowmemorykiller conditions
+
 endif # if ANDROID
 
 endmenu

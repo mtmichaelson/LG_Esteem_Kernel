@@ -79,6 +79,11 @@ int irq_tx, irq_rx;
 int g_tx_int_enable;	
 /* END: 0013584: jihyun.park@lge.com 2011-01-05 */   			
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+static atomic_t lte_sdio_probe_done = ATOMIC_INIT(0);
+atomic_t g_lte_crash = ATOMIC_INIT(0);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 MODULE_DEVICE_TABLE(sdio, lte_sdio_ids);
 
 /* BEGIN: 0013584: jihyun.park@lge.com 2011-01-05  */
@@ -107,6 +112,7 @@ static irqreturn_t lte_wake_up_tx(int irq, void *dev_id)
 
 static irqreturn_t lte_wake_up_rx(int irq, void *dev_id)
 {
+//	printk(KERN_CRIT "%s(%d)**************************\n",__func__,__LINE__); 		 
 
 	/* Wake lock for 3 sec */
 	wake_lock_timeout(&gLte_sdio_info->lte_wake_lock, HZ / 2);
@@ -138,7 +144,11 @@ static int lte_sdio_probe(struct sdio_func *func, const struct sdio_device_id *i
     	return 0; /*Confirm of Vendor ID and Device ID*/
     }
 
-	LTE_INFO("LTE_DRV_V_1_0_0\n");
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	 atomic_set(&lte_sdio_probe_done, 1);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
+   	LTE_INFO("LTE_DRV_V_1_0_0\n");
 
     LTE_INFO("vendor ID = 0x%x\n", func->vendor);
     LTE_INFO("device ID = 0x%x\n", func->device);
@@ -239,7 +249,7 @@ static void lte_sdio_remove(struct sdio_func *func)
 
 /*BEGIN: 0014627 daeok.kim@lge.com 2011-01-23 */
 /*MOD 0014627: [LTE] LTE Power off sequence is added on kernel in AP */
-	LTE_INFO("Remove FCN of LTE SDIO driver by LTE power off\n");
+//	LTE_INFO("Remove FCN of LTE SDIO driver by LTE power off\n");
 	lte_sdio_drv_deinit();
 
 	/* Commentted out for LTE power off sequence*/
@@ -255,6 +265,10 @@ static void lte_sdio_remove(struct sdio_func *func)
 #if 0
 	kfree(gLte_sdio_info);
 #endif
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	 atomic_set(&lte_sdio_probe_done, 0);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 /* BEGIN: 0013584: jihyun.park@lge.com 2011-01-05  */
 /* [LTE] Wakeup Scheme  for Power Saving Mode   */
@@ -273,6 +287,26 @@ static struct sdio_driver sdio_lte_driver = {
     .name       = "lte_sdio",
     .id_table   = lte_sdio_ids,
 };
+
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+void lte_wdt_off(void)
+{
+	/* Initialization of Global value*/
+	g_power_state =0;
+	g_tx_int_enable =0;
+
+	atomic_set(&lte_sdio_probe_done, 1);
+	
+	/* GPIO control for LTE power off sequence*/
+	gpio_set_value(154,0); // L2K Power GPIO
+
+	mdelay(60); // For power sequence
+	gpio_set_value(157,0); // L2K Reset GPIO
+	mdelay(100);
+
+}
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 static int lte_sdio_tty_open(struct tty_struct *tty, struct file *filep)
 {
@@ -298,6 +332,27 @@ static int lte_sdio_tty_close(struct tty_struct *tty, struct file *filep)
     FUNC_ENTER();
 
 	LTE_INFO("Closed TTY driver for LTE! Bye Mommy!\n");	
+
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+
+			/* IRQ Disable for LTE HW WDT RST*/
+//			disable_irq(gIrq_lte_hw_wdt);
+//			free_irq(gIrq_lte_hw_wdt, NULL);
+			/* sdio_release_irq & sdio_disable_func*/ 
+ //race 		lte_sdio_disable_function();
+
+			/* Initialization of Global value*/
+			g_power_state =0;
+			g_tx_int_enable =0;
+			
+			/* GPIO control for LTE power off sequence*/
+			gpio_set_value(154,0); // L2K Power GPIO
+
+			mdelay(60); // For power sequence
+			gpio_set_value(157,0); // L2K Reset GPIO
+			mdelay(100);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
     FUNC_EXIT();
     return 0;
@@ -340,7 +395,11 @@ static ssize_t lte_sdio_tty_write(struct tty_struct * tty, const unsigned char *
 		mutex_unlock(&gLte_sdio_info->tx_lock_mutex);
 /* END: 0018385 seungyeol.seo@lge.com 2011-03-22 */
 		LTE_ERROR("[LTE_ASSERT] SDIO Tx(CTRL message) blocking, return 0 \n");
-		return 0;
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+			return count;
+#else
+			return 0;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 	}
 /*END: 0017497 daeok.kim@lge.com 2011-03-05 */
 
@@ -354,7 +413,11 @@ static ssize_t lte_sdio_tty_write(struct tty_struct * tty, const unsigned char *
 		mutex_unlock(&gLte_sdio_info->tx_lock_mutex);
 /* END: 0018385 seungyeol.seo@lge.com 2011-03-22 */
 
-		return 0;
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	return count;
+#else
+	return 0;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 	}
 /* BEGIN: 0017997 jaegyu.lee@lge.com 2011-03-15 */
 /* MOD 0017997: [LTE] Wake-lock period rearrange in LTE SDIO driver */
@@ -370,6 +433,7 @@ static ssize_t lte_sdio_tty_write(struct tty_struct * tty, const unsigned char *
 //    FUNC_EXIT();
 /* END: 0018446 jaegyu.lee@lge.com 2011-03-23 */
 
+//	LTE_INFO("return tty write count = %d\n", count);
 
 	return count;
 }
@@ -552,6 +616,10 @@ static int lte_sdio_tty_tiocmset(struct tty_struct *tty, struct file *file,
 	return 0;
 }
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+static int ioctl_mutex = FALSE;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 		 unsigned int cmd, unsigned long arg)
 {
@@ -570,9 +638,16 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 /*END: 0014925 daeok.kim@lge.com 2011-01-27 */
 //    FUNC_ENTER();
 
-	if(_IOC_TYPE(cmd) != IOCTL_MAGIC) return -EINVAL;
-	if(_IOC_NR(cmd) >= IOIOCTL_MAXNR) return -EINVAL;
-
+	if(_IOC_TYPE(cmd) != IOCTL_MAGIC) 
+	{	
+//		LTE_INFO("(%d): IOCTL_MAGIC err \n",__LINE__);		
+		return -EINVAL;
+	}
+	if(_IOC_NR(cmd) >= IOIOCTL_MAXNR) 
+	{
+//		LTE_INFO("(%d): IOIOCTL_MAXNR err \n",__LINE__);		
+		return -EINVAL;
+	}
 #if 0
 	size = _IOC_SIZE(cmd);
 
@@ -589,14 +664,32 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 	}
 #endif
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+				if(atomic_read(&g_lte_crash) == 1)
+				{
+			//		LTE_INFO("(%d): after lte crash wake lock enter\n",__LINE__);
+					ioctl_mutex = TRUE;
+	
+					mutex_lock(&gLte_sdio_info->lte_ioctl_lock_mutex);
+					wake_lock(&gLte_sdio_info->lte_ioctl_wake_lock);
+			//		LTE_INFO("(%d): after lte crash wake lock enter done\n",__LINE__);
+				} 
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */			
+
 	ctrl_info = kmalloc(sizeof(lte_sdio_ioctl_info), GFP_KERNEL);
 	if(!ctrl_info)
-		return -ENOMEM;
-
+	{
+		LTE_INFO("(%d): kmalloc err \n",__LINE__);			
+		error = -ENOMEM;
+		goto err;
+	}
+	
 	if(copy_from_user(ctrl_info, argp, sizeof(lte_sdio_ioctl_info)))
 	{
 		kfree(ctrl_info);
-		return -ENOMEM;
+		LTE_INFO("(%d): copy_from_user err \n",__LINE__);					
+		error = -ENOMEM;
+		goto err;
 	}
 
 	size = ctrl_info->size;
@@ -633,6 +726,7 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 				error = -EFAULT;
 			break;	
 		case IOCTL_LTE_PWR_ON :
+			LTE_ERROR("IOCTL_LTE_PWR_ON \n");
 			/*Initial setting of Power on GPIO*/
 			gpio_tlmm_config(GPIO_CFG(154, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
 /* kwangdo.yi@lge.com S 2010.09.04
@@ -853,6 +947,23 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 			}
 /*END: 0011460 daeok.kim@lge.com 2010-11-27 */			
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+			if(atomic_read(&g_lte_crash) == 1)
+			{
+			printk("[LTE] %s(%d) wait start for card detect\n",__func__,__LINE__);
+			// wait for card detect complete			
+				for (i=0; i<200; i++)
+				{
+					if(atomic_read(&lte_sdio_probe_done) == 1)
+						break;
+
+					mdelay(50);
+				}
+				
+				printk("[LTE] %s(%d) wait (%dx50)ms for card detect\n",__func__,__LINE__,i);
+			}
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 			/*Try to check SDIO probing during 4second(80x50ms)*/
 			for (i=0; i<80; i++)
 			{
@@ -885,6 +996,7 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 			break;
 		
 		case IOCTL_LTE_PWR_OFF :
+			LTE_ERROR("IOCTL_LTE_PWR_OFF \n");
 #if defined (CONFIG_MACH_LGE_BRYCE_MS910)
 #else
 /*BEGIN: 0014925 daeok.kim@lge.com 2011-01-27 */
@@ -898,8 +1010,11 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 			printk("[LTE_SDIO_PWR_OFF] Start IOCTL_LTE_PWR_OFF \n");
 
 			/* IRQ Disable for LTE HW WDT RST*/
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+#else
 			disable_irq(gIrq_lte_hw_wdt);
 			free_irq(gIrq_lte_hw_wdt, NULL);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 			/* sdio_release_irq & sdio_disable_func*/ 
 			lte_sdio_disable_function();
 			/* IRQ Disable for LTE WAKE-UP*/
@@ -945,6 +1060,7 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 /*BEGIN: 0015454 daeok.kim@lge.com 2011-02-06 */
 /*MOD 0015454: [LTE] LTE_GPIO_PWR_OFF IOCTL is added, because of case of LTE SDIO rescan fail */
 		case IOCTL_LTE_GPIO_PWR_OFF:
+			LTE_ERROR("IOCTL_LTE_GPIO_PWR_OFF \n");			
 			/* In case of HW problem, Only LTE GPIO power off*/
 			/* GPIO control for LTE power off sequence*/
 #if defined (CONFIG_MACH_LGE_BRYCE_MS910)
@@ -978,6 +1094,7 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 			break;
 /*END: 0015454 daeok.kim@lge.com 2011-02-06 */
 		case IOCTL_LTE_SDIO_RESCAN:	
+			LTE_ERROR("IOCTL_LTE_SDIO_RESCAN \n");						
 			/* Do not use this case in the Bryce*/
 			if (gLte_sdio_info->func != NULL)
 			{
@@ -995,6 +1112,7 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 			break;
 			
 		case IOCTL_LTE_SDIO_BOOT :
+			LTE_ERROR("IOCTL_LTE_SDIO_BOOT start \n");									
 			/* LTE SDIO boot */
 			ctrl_info->result = lte_sdio_boot();
  			if(copy_to_user(argp, ctrl_info, sizeof(lte_sdio_ioctl_info)))
@@ -1005,10 +1123,11 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 			if(!ctrl_info->result)
 				g_power_state=1; // power control allowed, here!
 /* END: 0013584: jihyun.park@lge.com 2011-01-05 */   			
-
+			LTE_ERROR("IOCTL_LTE_SDIO_BOOT end g_power_state %d\n",g_power_state);									
 			break;
 
 		case IOCTL_LTE_TEST :
+			LTE_ERROR("IOCTL_LTE_TEST \n");												
 			LTE_INFO("Test SDIO/HIM driver\n");
 #ifdef SDIO_HIM_TEST
 			gLte_sdio_info->test_packet_size = ctrl_info->packet_size;
@@ -1028,6 +1147,20 @@ static int lte_sdio_tty_ioctl(struct tty_struct *tty, struct file *file,
 
 	}
 	kfree(ctrl_info);	
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+err:
+				if(ioctl_mutex == TRUE)
+				{
+		//			LTE_INFO("%s(%d): wake lock exit\n",__func__,__LINE__);
+					wake_unlock(&gLte_sdio_info->lte_ioctl_wake_lock);
+					mutex_unlock(&gLte_sdio_info->lte_ioctl_lock_mutex);
+					
+					ioctl_mutex = FALSE;
+				}
+#else
+ err:
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 	
 //    FUNC_EXIT();
 
@@ -1187,6 +1320,7 @@ static int lte_sdio_sysfs_deinit(void)
 {
 	if(lte_sdio_tty_dev)
 	{
+      LTE_ERROR("lte_sdio_sysfs_deinit lte_sdio_tty_dev \n");
 	    device_remove_file(lte_sdio_tty_dev, &dev_attr_txqueue);
 	    device_remove_file(lte_sdio_tty_dev, &dev_attr_rxcnt);
 	    device_remove_file(lte_sdio_tty_dev, &dev_attr_txcnt);

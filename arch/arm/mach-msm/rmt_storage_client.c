@@ -40,6 +40,11 @@
 #endif
 #include "smd_private.h"
 
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+#include <linux/kmod.h>
+#include <linux/workqueue.h>
+#endif
+
 enum {
 	RMT_STORAGE_EVNT_OPEN = 0,
 	RMT_STORAGE_EVNT_CLOSE,
@@ -547,6 +552,157 @@ static int rmt_storage_event_get_err_cb(struct rmt_storage_event *event_args,
 
 }
 
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+#define MAX_RMT_STORAGE_CID_CNT 2 // currently for modem_fs1 and 2
+static struct rmt_storage_user_data_args user_data_backup[MAX_RMT_STORAGE_CID_CNT];
+
+// rpc response for write_iovec is normally come down within 1 sec, so delayed work queue will be set to 3 sec 
+#define RMT_STORAGE_DELAYED_WORK_TIME msecs_to_jiffies(3000)
+static struct workqueue_struct *rmt_storage_err_wq;
+
+static int rmt_storage_user_data_store(struct rmt_storage_user_data_args *user_data)
+{
+
+	if((user_data->handle > MAX_RMT_STORAGE_CID_CNT) || (user_data->handle < 1))
+	{
+		pr_err("%s : invalid handle %d\n", __func__, user_data->handle);
+		return -1;
+	}
+	
+	user_data_backup[user_data->handle-1].handle = user_data->handle;
+	user_data_backup[user_data->handle-1].data = user_data->data;
+}
+
+static uint32_t get_rmt_storage_user_data_handle(uint32_t handle)
+{
+	return user_data_backup[handle -1].handle;
+}
+
+static uint32_t get_rmt_storage_user_data_data(uint32_t handle)
+{
+	return user_data_backup[handle -1].data;
+}
+
+static uint32_t recieved_handle = 0; 
+static void set_requested_handle(uint32_t handle)
+{
+	recieved_handle = handle;
+}
+
+static uint32_t get_requested_handle(void)
+{
+	return recieved_handle;
+}
+
+static uint32_t recieved_id = 0; 
+static void set_requested_id(uint32_t id)
+{
+	recieved_id = id;
+}
+
+static uint32_t get_requested_id(void)
+{
+	return recieved_id;
+}
+
+/*
+ * rmt_storage_delayed_wq_flag
+ * this will be set in the delayed work queue function.
+ * if rpc response is handled in the delayed work, ioctl from rmt_storage will not response rpc again.
+ */
+static int rmt_storage_delayed_wq_flag = -1;
+static void set_rmt_storage_delayed_wq_flag(int flag)
+{
+	pr_info("%s prev : %d will be set to flag = %d\n", __func__, rmt_storage_delayed_wq_flag, flag);
+	rmt_storage_delayed_wq_flag = flag;
+}
+
+static int get_rmt_storage_delayed_wq_flag(void)
+{
+	pr_info("%s flag : %d\n", __func__, rmt_storage_delayed_wq_flag);
+	return rmt_storage_delayed_wq_flag;
+}
+
+static void rmt_storage_err_func(struct work_struct *);
+static DECLARE_DELAYED_WORK(rmt_storage_err_delayed_work, rmt_storage_err_func);
+
+/*
+ * if rpc response for write_iovec does not come down within activation time for delayed workqueue, send rpc response to prevent modem watchdog.
+ * this error handling function will be called within RMT_STORAGE_DELAYED_WORK_TIME
+ */
+static void rmt_storage_err_func(struct work_struct *unused)
+{
+	uint32_t handle = 0, id = 0, data = 0;
+	struct rmt_storage_send_sts local_status;
+	static struct msm_rpc_client *local_rpc_client;
+	int ret = 0;
+
+	handle = get_requested_handle();
+	id = get_requested_id();
+	data = get_rmt_storage_user_data_data(handle);
+	
+	pr_info("%s: delayed wq \thandle=%d data=0x%x id=%d\n", __func__, handle, data, id);
+
+	local_status.handle = handle;
+	local_status.data = data;
+	local_status.xfer_dir = id;
+	local_status.err_code = 0; // should be returned RMFS_NO_ERROR to avoid FS_ERR_FATAL
+
+	set_rmt_storage_delayed_wq_flag(1);
+	
+	local_rpc_client = rmt_storage_get_rpc_client(local_status.handle);
+	if (local_rpc_client)
+		ret = msm_rpc_client_req2(local_rpc_client,
+			RMT_STORAGE_OP_FINISH_PROC,
+			rmt_storage_send_sts_arg,
+			&local_status, NULL, NULL, -1);
+	else
+		ret = -EINVAL;
+	if (ret < 0)
+		pr_err("%s: send status failed with ret val = %d\n",
+			__func__, ret);
+}
+
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH_TEST
+// if this flag is set to 1, rpc response from rmt_storage daemon will be blocked.
+int rmt_storage_kill_test_flag = -1;
+static void set_rmt_storage_kill_test_flag(int flag)
+{
+	pr_info("%s prev : %d will be set to flag = %d\n", __func__, rmt_storage_kill_test_flag, flag);
+	rmt_storage_kill_test_flag = flag;
+}
+
+static int get_rmt_storage_kill_test_flag(void)
+{
+	// if flag is set, print out the value
+	if(rmt_storage_kill_test_flag >= 0)
+		pr_info("%s flag : %d\n", __func__, rmt_storage_kill_test_flag);
+	return rmt_storage_kill_test_flag;
+}
+
+static ssize_t
+store_rmt_storage_kill_test(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	int value, rc;
+
+	sscanf(buf, "%d", &value);
+	set_rmt_storage_kill_test_flag(value);
+	return count;
+}
+
+static ssize_t
+show_rmt_storage_kill_test(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	pr_info("current value : %d\n0: enable ioctl response\n1: disable ioctl response\n", get_rmt_storage_kill_test_flag());
+	return snprintf(buf, PAGE_SIZE, "current value : %d\n0: enable ioctl response\n1: disable ioctl response\n", get_rmt_storage_kill_test_flag());
+}
+
+static DEVICE_ATTR(rmt_storage_kill_test, S_IRUGO | S_IWUSR, show_rmt_storage_kill_test, store_rmt_storage_kill_test);
+#endif /*CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH_TEST*/
+#endif /*CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH*/
+
 static int rmt_storage_event_user_data_cb(struct rmt_storage_event *event_args,
 		struct msm_rpc_xdr *xdr)
 {
@@ -571,6 +727,11 @@ static int rmt_storage_event_user_data_cb(struct rmt_storage_event *event_args,
 	event_args->handle = user_data->handle;
 	event_args->usr_data = user_data->data;
 	event_args->id = RMT_STORAGE_SEND_USER_DATA;
+
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+	// store data information to be used in the delayed workqueue rpc response
+	rmt_storage_user_data_store(user_data);
+#endif
 
 	kfree(event);
 	return RMT_STORAGE_NO_ERROR;
@@ -618,6 +779,20 @@ static int rmt_storage_event_write_iovec_cb(
 		wake_lock(&rmc->wlock);
 
 	pr_debug("iovec transfer count = %d\n\n", event_args->xfer_cnt);
+
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+	// if rpc response had been handled in the delayed workqueue, reset it
+	if(get_rmt_storage_delayed_wq_flag() == 1)
+		set_rmt_storage_delayed_wq_flag(0);
+	// restore the handle and id
+	set_requested_handle(event_args->handle);
+	set_requested_id(event_args->id);
+	// enable the delayed workqueue, if ioctl response frm rmt_storage is working fine this workqueue will be cancled.
+	if (rmt_storage_err_wq) {
+		queue_delayed_work(rmt_storage_err_wq, &rmt_storage_err_delayed_work, RMT_STORAGE_DELAYED_WORK_TIME);
+	}
+#endif
+
 	return RMT_STORAGE_NO_ERROR;
 }
 
@@ -663,6 +838,20 @@ static int rmt_storage_event_read_iovec_cb(
 		wake_lock(&rmc->wlock);
 
 	pr_debug("iovec transfer count = %d\n\n", event_args->xfer_cnt);
+
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+		// if rpc response had been handled in the delayed workqueue, reset it
+	if(get_rmt_storage_delayed_wq_flag() == 1)
+		set_rmt_storage_delayed_wq_flag(0);
+	// restore the handle and id
+	set_requested_handle(event_args->handle);
+	set_requested_id(event_args->id);
+	// enable the delayed workqueue, if ioctl response frm rmt_storage is working fine this workqueue will be cancled.
+	if (rmt_storage_err_wq) {
+		queue_delayed_work(rmt_storage_err_wq, &rmt_storage_err_delayed_work, RMT_STORAGE_DELAYED_WORK_TIME);
+	}
+#endif
+
 	return RMT_STORAGE_NO_ERROR;
 }
 
@@ -948,6 +1137,29 @@ static long rmt_storage_ioctl(struct file *fp, unsigned int cmd,
 
 	case RMT_STORAGE_SEND_STATUS:
 		pr_info("%s: send status ioctl\n", __func__);
+		
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH_TEST
+		// block rpc response from rmt_storage daemon for test case.
+		if(get_rmt_storage_kill_test_flag() == 1)
+		{
+			pr_info("%s: disable ioctl response\n", __func__);
+			copy_from_user(&status, (void __user *)arg, sizeof(struct rmt_storage_send_sts));
+			pr_debug("%s: \thandle=%d err_code=%d data=0x%x\n", __func__,
+				status.handle, status.err_code, status.data);
+			ret = -EINVAL;
+			if (atomic_dec_return(&rmc->wcount) == 0)
+				wake_unlock(&rmc->wlock);
+			return ret;			
+		}
+#endif
+		// cancle the delayed workqueue
+		if (rmt_storage_err_wq)
+		{
+			pr_info("%s: cancle delayed work queue\n", __func__);
+			cancel_delayed_work_sync(&rmt_storage_err_delayed_work);
+		}
+#endif
 		if (copy_from_user(&status, (void __user *)arg,
 				sizeof(struct rmt_storage_send_sts))) {
 			pr_err("%s: copy from user failed\n\n", __func__);
@@ -956,6 +1168,22 @@ static long rmt_storage_ioctl(struct file *fp, unsigned int cmd,
 				wake_unlock(&rmc->wlock);
 			break;
 		}
+
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+		// if the designated rpc call has already been handled in the delayed workqueue, ignore rpc response from rmt_storage daemon.
+		if((get_rmt_storage_delayed_wq_flag() == 1) && (status.handle == get_requested_handle()) && (status.xfer_dir == get_requested_id()))
+		{
+			set_rmt_storage_delayed_wq_flag(0);
+			pr_err("%s: already handled in delayed workqueue\n", __func__);
+			pr_debug("%s: \thandle=%d err_code=%d data=0x%x\n", __func__,
+				status.handle, status.err_code, status.data);
+			ret = -EINVAL;
+			if (atomic_dec_return(&rmc->wcount) == 0)
+				wake_unlock(&rmc->wlock);
+			return ret;
+		}	
+#endif
+
 #ifdef CONFIG_MSM_RMT_STORAGE_CLIENT_STATS
 		stats = &client_stats[status.handle - 1];
 		if (status.xfer_dir == RMT_STORAGE_WRITE)
@@ -1348,6 +1576,9 @@ static DEVICE_ATTR(sync_sts, S_IRUGO | S_IWUSR, show_sync_sts, NULL);
 static struct attribute *dev_attrs[] = {
 	&dev_attr_force_sync.attr,
 	&dev_attr_sync_sts.attr,
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+	&dev_attr_rmt_storage_kill_test.attr,
+#endif
 	NULL,
 };
 static struct attribute_group dev_attr_grp = {
@@ -1458,6 +1689,12 @@ static int rmt_storage_probe(struct platform_device *pdev)
 	ret = sysfs_create_group(&pdev->dev.kobj, &dev_attr_grp);
 	if (ret)
 		pr_err("%s: Failed to create sysfs node: %d\n", __func__, ret);
+
+
+#ifdef CONFIG_LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+	rmt_storage_err_wq = create_singlethread_workqueue("rmt_storage_err_wq");
+	//INIT_WORK(&rmt_storage_err_data.work, rmt_storage_err_func);
+#endif
 
 	return 0;
 

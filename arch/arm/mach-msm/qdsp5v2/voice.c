@@ -506,11 +506,11 @@ static int voice_cmd_device_info(struct voice_data *v)
 	if (v->network == NETWORK_WCDMA_WB)
 		vol = v->min_rx_vol[VOC_WB_INDEX] +
 			((v->max_rx_vol[VOC_WB_INDEX] -
-			v->min_rx_vol[VOC_WB_INDEX]) * v->dev_rx.volume)/100;
+			v->min_rx_vol[VOC_WB_INDEX]) * v->dev_rx.volume)/75;
 	else
 		vol = v->min_rx_vol[VOC_NB_INDEX] +
 			((v->max_rx_vol[VOC_NB_INDEX] -
-			v->min_rx_vol[VOC_NB_INDEX]) * v->dev_rx.volume)/100;
+			v->min_rx_vol[VOC_NB_INDEX]) * v->dev_rx.volume)/75;
 	cmd.rx_volume = (u32)vol; /* in mb */
 /*BEGIN: 0011955 kiran.kanneganti@lge.com 2010-12-07*/
 /*ADD 0011955: QDSP Rx Mute support in voice call*/	

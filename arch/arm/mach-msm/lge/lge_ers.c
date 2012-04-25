@@ -28,6 +28,7 @@
 #include <linux/fs.h>
 #include <asm/stat.h>
 #endif
+#include <linux/rtc.h>
 
 #include "../proc_comm.h"
 
@@ -206,6 +207,117 @@ static ssize_t lte_ers_panic_store(struct device *dev, struct device_attribute *
 }
 static DEVICE_ATTR(lte_ers_panic, 0664 , NULL, lte_ers_panic_store); //#2011.07.28 - CTS FAIL android.permission.cts.FileSystemPermissionTest#testAllBlockDevicesAreNotReadableWritable
 //static DEVICE_ATTR(lte_ers_panic, S_IRUGO | S_IWUGO, NULL, lte_ers_panic_store);
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+// ONLY TEST
+extern int lte_crash_recovery_test_flag;
+
+static ssize_t lte_crash_recovery_test_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", lte_crash_recovery_test_flag);
+}
+
+// File : /sys/devices/platform/ers-kernel.0/lte_crash_recovery_test
+static ssize_t lte_crash_recovery_test_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+	unsigned long cmd=0;
+
+	if(buf == NULL)
+	{
+		printk(KERN_ERR "NULL buffer\n", __func__);	
+		return 0;
+	}
+
+	cmd = simple_strtoul(buf,NULL,10);
+
+	switch(cmd)
+	{
+		case 0:
+		lte_crash_recovery_test_flag = 0;			
+		printk(KERN_ERR "%s : lte_crash_recovery_test_flag = %d cmd \n", __func__,lte_crash_recovery_test_flag);		
+		break;
+
+		case 1:
+		lte_crash_recovery_test_flag = 1;	
+		printk(KERN_ERR "%s : lte_crash_recovery_test_flag = %d cmd \n", __func__,lte_crash_recovery_test_flag);		
+		break;
+
+		default:
+		printk(KERN_ERR "%s : Unknown command : %d\n", __func__, cmd);	
+		break;
+	}	
+	
+	return 0;
+}
+
+static DEVICE_ATTR(lte_crash_recovery_test, 0664 , lte_crash_recovery_test_show, lte_crash_recovery_test_store);
+
+// File : /sys/devices/platform/ers-kernel.0/lte_check_time
+static unsigned long lte_crash_cnt = 0;
+
+void store_lte_crash_time(void)
+{
+	struct timespec ts;
+	struct rtc_time tm;
+
+	int fd = 0;
+	char buff[50];	
+	mm_segment_t oldfs;
+	int file_size = 0;
+		
+	getnstimeofday(&ts);
+	rtc_time_to_tm(ts.tv_sec, &tm);
+
+	memset(buff, 0x00, sizeof(buff));
+
+	oldfs = get_fs();
+	set_fs(get_ds());
+
+	if(lte_crash_cnt == 0xFFFFFFFF)
+		lte_crash_cnt = 0;
+	else
+		lte_crash_cnt ++;
+
+	sprintf(buff,"(%d) : %d-%02d-%02d %02d:%02d:%02d.%09lu UTC",lte_crash_cnt,
+			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec);
+
+  if ( (fd = sys_open((const char __user *) "/persist/lte_images/lte_time", O_WRONLY | O_CREAT | O_APPEND, 0775) ) < 0 )
+ 	{
+		printk(KERN_CRIT "[LTE_%s]%d: /persist/lte_images/lte_time Fail open err %d\n",__func__,__LINE__,fd);		
+	}
+
+	buff[49] = 0x0A;
+	
+	sys_write(fd, buff, sizeof(buff));
+
+	file_size = sys_lseek(fd, (off_t)0,SEEK_END);
+  printk(KERN_CRIT "[LTE_%s]%d: /persist/lte_images/lte_time size (%d) \n",__func__,__LINE__,file_size);		
+
+	sys_close(fd);
+
+	if(file_size > 512000) // MAX size : 512KB
+	{
+		printk(KERN_CRIT "[LTE_%s]%d: /persist/lte_images/lte_time size (%d) > 1M -> delete \n",__func__,__LINE__,file_size);		
+		sys_unlink((const char __user *)"/persist/lte_images/lte_time");
+
+	  	if ( (fd = sys_open( "/persist/lte_images/lte_time", O_WRONLY | O_CREAT | O_TRUNC, 0775) ) < 0 )
+ 		{
+			printk(KERN_CRIT "[LTE_%s]%d:  /persist/lte_images/lte_time Fail open err %d\n",__func__,__LINE__,fd);		
+		}
+		sys_write(fd, buff, sizeof(buff));
+		sys_close(fd);		
+	}
+
+	set_fs(oldfs);
+}
+
+static ssize_t lte_check_time_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", lte_crash_cnt);
+}
+
+static DEVICE_ATTR(lte_check_time, 0664 , lte_check_time_show, NULL);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 int lte_crash_log_in(void *buffer, unsigned int size, unsigned int reserved)
 {
@@ -914,6 +1026,21 @@ static int __devinit ers_probe(struct platform_device *pdev)
 	}
 		
 /* neo.kang@lge.com	10.12.29. E */
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	ret = device_create_file(&pdev->dev, &dev_attr_lte_crash_recovery_test);
+	if (ret < 0) {
+		printk("device_create_file error!\n");
+		return ret;
+	}
+
+	ret = device_create_file(&pdev->dev, &dev_attr_lte_check_time);
+	if (ret < 0) {
+		printk("dev_attr_lte_check_time device_create_file error!\n");
+		return ret;
+	}	
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 #endif // CONFIG_LGE_LTE_ERS
 
 	ret = device_create_file(&pdev->dev, &dev_attr_set_modem_auto_action);

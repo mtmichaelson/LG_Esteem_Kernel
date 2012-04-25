@@ -2424,6 +2424,7 @@ void show_free_areas(void)
 			" writeback_tmp:%lukB"
 			" pages_scanned:%lu"
 			" all_unreclaimable? %s"
+			" file_pages:%lukB"
 			"\n",
 			zone->name,
 			K(zone_nr_free_pages(zone)),
@@ -2452,7 +2453,8 @@ void show_free_areas(void)
 			K(zone_page_state(zone, NR_BOUNCE)),
 			K(zone_page_state(zone, NR_WRITEBACK_TEMP)),
 			zone->pages_scanned,
-			(zone->all_unreclaimable ? "yes" : "no")
+			(zone->all_unreclaimable ? "yes" : "no"),
+			K(zone_page_state(zone, NR_FILE_PAGES))
 			);
 		printk("lowmem_reserve[]:");
 		for (i = 0; i < MAX_NR_ZONES; i++)

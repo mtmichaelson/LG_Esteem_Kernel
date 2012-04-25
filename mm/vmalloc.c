@@ -1479,8 +1479,13 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 	area->nr_pages = nr_pages;
 	/* Please note that the recursion is strictly bounded. */
 	if (array_size > PAGE_SIZE) {
+#ifdef CONFIG_LGE_MEMORY_HOTPLUG_SET_HIGHMEM_WITH_MOVABLE
+		pages = __vmalloc_node(array_size, 1, nested_gfp|__GFP_HIGHMEM|__GFP_MOVABLE,
+				PAGE_KERNEL, node, caller);
+#else
 		pages = __vmalloc_node(array_size, 1, nested_gfp|__GFP_HIGHMEM,
 				PAGE_KERNEL, node, caller);
+#endif
 		area->flags |= VM_VPAGES;
 	} else {
 		pages = kmalloc_node(array_size, nested_gfp, node);
@@ -1594,8 +1599,13 @@ EXPORT_SYMBOL(__vmalloc);
  */
 void *vmalloc(unsigned long size)
 {
+#ifdef CONFIG_LGE_MEMORY_HOTPLUG_SET_HIGHMEM_WITH_MOVABLE
+	return __vmalloc_node(size, 1, GFP_KERNEL | __GFP_HIGHMEM | __GFP_MOVABLE, PAGE_KERNEL,
+					-1, __builtin_return_address(0));
+#else
 	return __vmalloc_node(size, 1, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL,
 					-1, __builtin_return_address(0));
+#endif
 }
 EXPORT_SYMBOL(vmalloc);
 
@@ -1611,9 +1621,15 @@ void *vmalloc_user(unsigned long size)
 	struct vm_struct *area;
 	void *ret;
 
+#ifdef CONFIG_LGE_MEMORY_HOTPLUG_SET_HIGHMEM_WITH_MOVABLE
+	ret = __vmalloc_node(size, SHMLBA,
+			     GFP_KERNEL | __GFP_HIGHMEM | __GFP_ZERO | __GFP_MOVABLE,
+			     PAGE_KERNEL, -1, __builtin_return_address(0));
+#else
 	ret = __vmalloc_node(size, SHMLBA,
 			     GFP_KERNEL | __GFP_HIGHMEM | __GFP_ZERO,
 			     PAGE_KERNEL, -1, __builtin_return_address(0));
+#endif
 	if (ret) {
 		area = find_vm_area(ret);
 		area->flags |= VM_USERMAP;
@@ -1635,8 +1651,13 @@ EXPORT_SYMBOL(vmalloc_user);
  */
 void *vmalloc_node(unsigned long size, int node)
 {
+#ifdef CONFIG_LGE_MEMORY_HOTPLUG_SET_HIGHMEM_WITH_MOVABLE
+	return __vmalloc_node(size, 1, GFP_KERNEL | __GFP_HIGHMEM | __GFP_MOVABLE, PAGE_KERNEL,
+					node, __builtin_return_address(0));
+#else
 	return __vmalloc_node(size, 1, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL,
 					node, __builtin_return_address(0));
+#endif
 }
 EXPORT_SYMBOL(vmalloc_node);
 
@@ -1658,8 +1679,13 @@ EXPORT_SYMBOL(vmalloc_node);
 
 void *vmalloc_exec(unsigned long size)
 {
+#ifdef CONFIG_LGE_MEMORY_HOTPLUG_SET_HIGHMEM_WITH_MOVABLE
+	return __vmalloc_node(size, 1, GFP_KERNEL | __GFP_HIGHMEM | __GFP_MOVABLE, PAGE_KERNEL_EXEC,
+			      -1, __builtin_return_address(0));
+#else
 	return __vmalloc_node(size, 1, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL_EXEC,
 			      -1, __builtin_return_address(0));
+#endif
 }
 
 #if defined(CONFIG_64BIT) && defined(CONFIG_ZONE_DMA32)

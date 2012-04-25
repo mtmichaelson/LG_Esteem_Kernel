@@ -132,6 +132,13 @@ config LGE_LTE_ERS
         help
           LGE LTE crash log enable
 
+config LGE_LTE_CRASH_RECOVERY
+    bool "Support LGE LTE Crash Recovery"
+    default n
+    depends on MACH_LGE_BRYCE_MS910
+    help
+       LGE LTE crash recovery
+
 config LGE_LTE_USB_SWITCH_REQUEST
 	bool "LGE LTE USB SWITCHING REQUEST"
 	depends on LGE_LTE_ERS
@@ -170,5 +177,11 @@ config LGE_KERNEL_SYSTEM_STATE
 	  kernel crash might be occured as kernel will be waiting with for loop
 	  This is odd because device and sysdev has already been shutdown.
 
+config LGE_NOTIFY_RECOVERY_MODE
+	bool "Support RECOVERY MODE notification to CP"
+	default n 
+	depends on LGE_SYNC_CMD
+	help
+	 RECOVERY MODE notification command
 
 endmenu

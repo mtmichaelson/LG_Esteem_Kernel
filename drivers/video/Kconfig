@@ -2285,6 +2285,8 @@ config FB_MSM_OVERLAY
 	bool "MDP4 overlay support"
 	default n
 
+# jaeseong.gim 	10.07.26
+# for hdmi n->y
 config FB_MSM_DTV
 	depends on FB_MSM_OVERLAY
 	bool

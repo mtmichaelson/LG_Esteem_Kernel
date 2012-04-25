@@ -64,6 +64,11 @@ void lte_sdio_wake_up_tx_skip(unsigned long arg);
 void lte_sdio_wake_up_tx_init(void); 
 /* END: 0013584: jihyun.park@lge.com 2011-03-11 */   			
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+#define RACE_D KERN_CRIT
+
+extern atomic_t g_lte_crash;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 int lte_sdio_enable_function(void)
 {
 	int error = 0;
@@ -196,12 +201,26 @@ int lte_sdio_drv_init(void)
 
 /* BEGIN: 0017997 jaegyu.lee@lge.com 2011-03-15 */
 /* MOD 0017997: [LTE] Wake-lock period rearrange in LTE SDIO driver */
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+#else
 	wake_lock_init(&gLte_sdio_info->lte_wake_lock, WAKE_LOCK_SUSPEND, "LTE");
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 	wake_lock_init(&gLte_sdio_info->tx_data_wake_lock, WAKE_LOCK_SUSPEND, "TX_DATA");
 	wake_lock_init(&gLte_sdio_info->tx_control_wake_lock, WAKE_LOCK_SUSPEND, "TX_CONTROL");
 	wake_lock_init(&gLte_sdio_info->rx_wake_lock, WAKE_LOCK_SUSPEND, "RX");
 /* END: 0017997 jaegyu.lee@lge.com 2011-03-15 */   
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	if(atomic_read(&g_lte_crash) == 0)
+  {
+		wake_lock_init(&gLte_sdio_info->lte_wake_lock, WAKE_LOCK_SUSPEND, "LTE");
+	
+		init_MUTEX(&gLte_sdio_info->lte_ioctl_lock_mutex);		
+		wake_lock_init(&gLte_sdio_info->lte_ioctl_wake_lock, WAKE_LOCK_SUSPEND, "LTE_IOCTL");
+  }
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 #ifdef SDIO_TX_TIMER
 	gLte_sdio_info->timer = (struct timer_list *)kzalloc(sizeof(struct timer_list), GFP_KERNEL);
 	if(gLte_sdio_info->timer==0)
@@ -250,6 +269,10 @@ int lte_sdio_drv_init(void)
 	return 0;
 }
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+extern void l2k_eth_wq_flush(void);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 int lte_sdio_drv_deinit(void)
 {
 #ifdef SDIO_TX_TIMER
@@ -269,10 +292,13 @@ int lte_sdio_drv_deinit(void)
 	/* free tx list head */
 	kfree(gLte_sdio_info->tx_packet_head);
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+#else
 /* BEGIN: 0013584: jihyun.park@lge.com 2011-01-05  */
 /* [LTE] Wakeup Scheme  for Power Saving Mode   */
 	wake_lock_destroy(&gLte_sdio_info->lte_wake_lock);
 /* END: 0013584: jihyun.park@lge.com 2011-01-05 */   			
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 
 	/* BEGIN: 0018385 seungyeol.seo@lge.com 2011-03-22 */
@@ -295,6 +321,12 @@ int lte_sdio_drv_deinit(void)
 	wake_lock_destroy(&gLte_sdio_info->rx_wake_lock);	
 /* END: 0017997 jaegyu.lee@lge.com 2011-03-15 */
 	
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	cancel_work_sync(&gLte_sdio_info->tx_worker); 						
+	cancel_work_sync(&gLte_sdio_info->rx_worker); 						
+	l2k_eth_wq_flush();
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 #ifndef SDIO_TX_TIMER
 	/* release workqueue */
 	if (gLte_sdio_info->tx_workqueue != NULL)
@@ -472,7 +504,7 @@ int lte_sdio_start_tx_timeout(void)
 	init_timer(&gLte_sdio_info->tx_timeout);
 	/* BEGIN: 0018745 seungyeol.seo@lge.com 2011-04-06 */
 	/* MOD 0018745: [LTE] To prevent from late response of L2000 */
-	gLte_sdio_info->tx_timeout.expires = jiffies + 10*HZ;
+	gLte_sdio_info->tx_timeout.expires = jiffies + 5*HZ;  //race 10s -> 5s
 	/* END: 0018745 seungyeol.seo@lge.com 2011-04-06 */   
 	gLte_sdio_info->tx_timeout.data = 0;
 	gLte_sdio_info->tx_timeout.function = lte_sdio_tx_timeout_func;
@@ -484,7 +516,7 @@ int lte_sdio_start_rx_timeout(void)
 	init_timer(&gLte_sdio_info->rx_timeout);
 	/* BEGIN: 0018745 seungyeol.seo@lge.com 2011-04-06 */
 	/* MOD 0018745: [LTE] To prevent from late response of L2000 */
-	gLte_sdio_info->rx_timeout.expires = jiffies + 10*HZ;
+	gLte_sdio_info->rx_timeout.expires = jiffies + 5*HZ;  //race 10s -> 5s
 	/* END: 0018745 seungyeol.seo@lge.com 2011-04-06 */   
 	gLte_sdio_info->rx_timeout.data = 0;
 	gLte_sdio_info->rx_timeout.function = lte_sdio_rx_timeout_func;
@@ -497,8 +529,12 @@ void lte_sdio_tx_timeout_func(unsigned long arg)
 
 	LTE_ERROR("SDIO TX failed, because of L2000 doesn't respond\n");
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	g_tx_loop_skip = 2;
+#else
     abc = NULL;
     *abc= 0;	
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 }
 
 void lte_sdio_rx_timeout_func(unsigned long arg)
@@ -507,8 +543,12 @@ void lte_sdio_rx_timeout_func(unsigned long arg)
 
 	LTE_ERROR("SDIO RX failed, because of L2000 doesn't respond\n");
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	g_tx_loop_skip = 2;
+#else
     abc = NULL;
     *abc= 0;	
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 }
 /* END: 0018522 jaegyu.lee@lge.com 2011-03-24 */   
 #ifndef SDIO_TX_TIMER
@@ -527,6 +567,14 @@ static void lte_sdio_tx(void *data)
 		c_tx_buff=kzalloc(HIM_BLOCK_TX_MAX_SIZE, GFP_KERNEL);
 	}
 #endif /* LTE_STATIC_BUFFER */
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	if(atomic_read(&g_lte_crash) == 1)
+	{
+		printk(RACE_D "%s(%d): already LTE crash occur\n",__func__,__LINE__);
+		return;
+	}
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 	mutex_lock(&gLte_sdio_info->tx_lock_mutex);
 
@@ -673,13 +721,14 @@ static void lte_sdio_tx(void *data)
 /* [LTE] Wakeup Scheme  for Power Saving Mode   */
 #ifdef LTE_WAKE_UP
 	                        gpio_set_value(GPIO_L2K_LTE_WAKEUP,FALSE);	//SET LTE_WU
-#endif			    				
+#endif		
 				/* BEGIN: 0018385 seungyeol.seo@lge.com 2011-03-22 */
 				/* MOD 0018385 : [LTE] Rearrangement of 'Wake Lock' section */
 				wake_unlock(&gLte_sdio_info->tx_data_wake_lock);
 				/* END: 0018385 seungyeol.seo@lge.com 2011-03-22 */
 /* END: 0013584: jihyun.park@lge.com 2011-01-05 */   			
 				mutex_unlock(&gLte_sdio_info->tx_lock_mutex);				
+				LTE_INFO("%d) \n",__LINE__);
 
 				return;
 			}
@@ -737,18 +786,40 @@ int lte_sdio_check_card_status(void)
 	return 0;
 
 }
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY  
+extern int send_lte_crash_noty_packet(void);
+
+// ONLY TEST
+int lte_crash_recovery_test_flag = 0;
+
+void lte_crash_recovery_test_ftn(void)
+{
+	if(lte_crash_recovery_test_flag)
+	{
+		LTE_ERROR("%s : cmd before ssleep \n", __func__);	
+		ssleep(10);
+		LTE_ERROR("%s : cmd after ssleep \n", __func__);	
+	}
+}
+
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 /* END: 0017997 jaegyu.lee@lge.com 2011-03-15 */
 /* BEGIN: 0013584: jihyun.park@lge.com 2011-01-05  */
 /* [LTE] Wakeup Scheme  for Power Saving Mode   */
 #ifdef LTE_WAKE_UP
 int lte_sdio_wake_up_tx(void * tmp_him_blk_ptr, unsigned int write_length)
 {
-	int ret = 0, result=0, ret_tx, i;
+	int ret = 0, result=0xFF, ret_tx, i=0;
 	
 	/* BEGIN: 0018852: seungyeol.seo@lge.com 2011-04-22  */
 	/* [LTE] Read done checking & L2K WAKEUP retry for 5 times  */
 	int status_checking_cycle=0;
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	status_checking_cycle = jiffies + 10; // 10ms + 100ms
+#else
 	status_checking_cycle = jiffies + 1*HZ;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 	/* END: 0018852: seungyeol.seo@lge.com 2011-04-22 */   			
 /* BEGIN: 0013584: jihyun.park@lge.com 2011-03-11  */
 /* [LTE] Wakeup Scheme  for Power Saving Mode   */	
@@ -757,22 +828,34 @@ int lte_sdio_wake_up_tx(void * tmp_him_blk_ptr, unsigned int write_length)
     add_timer(&gLte_sdio_info->lte_timer); 
 /* END: 0013584: jihyun.park@lge.com 2011-03-11 */   			
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY  
+		// ONLY TEST
+		lte_crash_recovery_test_ftn();
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
         do {
 	    ret = gpio_get_value(GPIO_L2K_LTE_STATUS);			//READ LTE_ST
 	    //printk(" *********** LTE_STATUS= %d, %x*********** \n", ret, ret);	
             if (ret) break;
             
+				if(i==5) break;
 	    //ret_tx = gpio_tlmm_config(GPIO_CFG(GPIO_L2K_LTE_STATUS, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
 	    //gpio_direction_input(GPIO_L2K_LTE_STATUS);	
 	    //usleep(1); ///// add - 100us delay
 		/* BEGIN: 0018852: seungyeol.seo@lge.com 2011-04-22  */
 //MS910_TEST 60 times retry		/* [LTE] Read done checking & L2K WAKEUP retry for 5 times  */
 		if(jiffies > status_checking_cycle || jiffies == status_checking_cycle){
-			printk("(%d jiffies) Periodic Checking S \n",jiffies);
+			printk("(%d jiffies) Periodic Checking S (i=%d) \n",jiffies,i);
 			gpio_set_value(GPIO_L2K_LTE_WAKEUP,FALSE);
 			mdelay(1);
 			gpio_set_value(GPIO_L2K_LTE_WAKEUP,TRUE);
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+			status_checking_cycle = jiffies + 10; // 10ms + 100ms
+			i++;
+#else
 			status_checking_cycle = jiffies + HZ*1;
+			i++;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 			//printk("(%d jiffies) Periodic Checking E (target is %d)\n",jiffies,status_checking_cycle);
 		}
 		/* END: 0018852: seungyeol.seo@lge.com 2011-04-22 */  
@@ -788,8 +871,17 @@ int lte_sdio_wake_up_tx(void * tmp_him_blk_ptr, unsigned int write_length)
 /* BEGIN: 0013584: jihyun.park@lge.com 2011-03-11  */
 /* [LTE] Wakeup Scheme  for Power Saving Mode   */	
     del_timer(&gLte_sdio_info->lte_timer); 
-    if( g_tx_loop_skip == 2) 
-		return result; 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+		if( g_tx_loop_skip == 2)
+		{	
+			g_tx_loop_skip = 0;			
+			send_lte_crash_noty_packet();
+			return write_length; 
+		}
+#else
+    if( g_tx_loop_skip == 2)
+			return result; 
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 /* END: 0013584: jihyun.park@lge.com 2011-03-11 */   			
 /* BEGIN: 0018522 jaegyu.lee@lge.com 2011-03-24 */
 /* MOD 0018522: [LTE] Kernel crash happen, When the SDIO TX & RX fail in 5sec */
@@ -801,6 +893,8 @@ int lte_sdio_wake_up_tx(void * tmp_him_blk_ptr, unsigned int write_length)
     del_timer(&gLte_sdio_info->tx_timeout);
 	if(result != 0)
 	{
+		atomic_set(&g_lte_crash, 1);
+		send_lte_crash_noty_packet();
 		LTE_ERROR("Failed to wrtie data to LTE. Error = 0x%x\n", result);
 	}	
 /* END: 0018522 jaegyu.lee@lge.com 2011-03-24 */
@@ -834,11 +928,16 @@ void lte_sdio_wake_up_tx_skip(unsigned long arg)
     int* abc;
     // use a global variable for indicating escape a while loop
     g_tx_loop_skip = 2;
-	printk(" *********** LTE doesn't respond ! *********** \n");							 		
+		atomic_set(&g_lte_crash, 1);
+		
     // Crash AP with NULL pointer
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+#else
     abc = NULL;
     *abc= 0;
-    
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
+	printk("(%s) *********** LTE doesn't respond ! *********** \n",__func__);							 		    
 }
 
 void lte_sdio_wake_up_tx_init()
@@ -848,7 +947,18 @@ void lte_sdio_wake_up_tx_init()
 		/* BEGIN: 0018852: seungyeol.seo@lge.com 2011-04-22  */
 		/* [LTE] Read done checking & L2K WAKEUP retry for 5 times   */
 //MS910_TEST	gLte_sdio_info->lte_timer.expires = jiffies +  5*HZ+1; //5sec + 10msec
-		gLte_sdio_info->lte_timer.expires = jiffies +  60*HZ+1; //60sec + 10msec
+//		gLte_sdio_info->lte_timer.expires = jiffies +  60*HZ+1; //60sec + 10msec
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+// ONLY TEST
+//    if(lte_crash_recovery_test_flag)
+    {
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	gLte_sdio_info->lte_timer.expires = jiffies + 50; //10ms + 500ms
+#else
+			gLte_sdio_info->lte_timer.expires = jiffies +  5*HZ+1; //5sec + 10msec
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+    }
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 		/* END: 0018852: seungyeol.seo@lge.com 2011-04-22 */  
 	gLte_sdio_info->lte_timer.data = NULL; 
 	gLte_sdio_info->lte_timer.function = lte_sdio_wake_up_tx_skip; 
@@ -1135,7 +1245,7 @@ void suspended_rx_workqueue_checking_timer_init()
 /*ADD 0014536: [LTE] Rx thread is changed by Single thread workqueue in SDIO driver */
 static void lte_sdio_rx(void *data)
 {
-	int error;
+	int error = 0xFF;
 	unsigned int size;
 	unsigned char reg;
 #ifdef LTE_STATIC_BUFFER
@@ -1148,6 +1258,14 @@ static void lte_sdio_rx(void *data)
 #else
 	unsigned char *receive_buffer;
 #endif /* LTE_STATIC_BUFFER */
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	if(atomic_read(&g_lte_crash) == 1)
+	{
+		printk(RACE_D "%s(%d): already LTE crash occur\n",__func__,__LINE__);
+		return;		
+	}
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 /* BEGIN: 0018522 jaegyu.lee@lge.com 2011-03-24 */
 /* MOD 0018522: [LTE] Kernel crash happen, When the SDIO TX & RX fail in 5sec */
@@ -1181,6 +1299,8 @@ static void lte_sdio_rx(void *data)
     del_timer(&gLte_sdio_info->rx_timeout);
     if(error != 0)
 	{
+		atomic_set(&g_lte_crash, 1);
+		send_lte_crash_noty_packet();
 		LTE_ERROR("Failed to read transfer count. Error = 0x%x\n", error);
     }
 //	printk("g");
@@ -1267,6 +1387,8 @@ static void lte_sdio_rx(void *data)
     del_timer(&gLte_sdio_info->rx_timeout);
     if(error != 0)
 	{
+				atomic_set(&g_lte_crash, 1);
+				send_lte_crash_noty_packet();
 		LTE_ERROR("Failed to read data from LTE. Error = 0x%x\n", error);
     }
 /* END: 0018522 jaegyu.lee@lge.com 2011-03-24 */

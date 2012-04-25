@@ -829,7 +829,14 @@ int remote_rpc_request(uint32_t command)
 				if(rc != LG_RAPI_SUCCESS)
 					rc = -1;
 				break;
-#endif			
+#endif
+#ifdef CONFIG_LGE_NOTIFY_RECOVERY_MODE
+			case LGE_RECOVERY_NOTIFICATION:
+				pr_info("%s, recovery notification retry count : %d\r\n", __func__, GET_INT32(output));
+				if(rc != LG_RAPI_SUCCESS)
+					rc = -1;
+				break;
+#endif
 			default :
 				break;
 		}
@@ -1053,4 +1060,41 @@ void lte_usb_switch_request(int lte_usb_enabled)
 }
 EXPORT_SYMBOL(lte_usb_switch_request);
 #endif
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+void lte_uart_start_request(int value)
+{
+	struct oem_rapi_client_streaming_func_arg arg;
+	struct oem_rapi_client_streaming_func_ret ret;
+	int rc= -1;
+
+	Open_check();
+
+	arg.event = LG_FW_LTE_UART_START_REQ;
+	arg.cb_func = NULL;
+	arg.handle = (void*) 0;
+	arg.in_len = sizeof(int);
+	arg.input = (char*) &value;
+	arg.out_len_valid = 0;
+	arg.output_valid = 0;
+	arg.output_size = 0;  /* alloc memory for response */
+
+	ret.output = (char*)NULL;
+	ret.out_len = 0;
+
+	rc = oem_rapi_client_streaming_function(client, &arg, &ret);
+	if (rc < 0)
+	{
+		pr_err("%s, rapi reqeust failed\r\n", __func__);
+	}
+
+	// free received buffers if it is not empty
+	if (ret.output)
+		kfree(ret.output);
+	if (ret.out_len)
+		kfree(ret.out_len);
+	
+	return;
+}
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 

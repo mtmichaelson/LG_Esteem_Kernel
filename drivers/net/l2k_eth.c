@@ -145,6 +145,8 @@ static const char l2k_eth_driver_version[] =
 static unsigned int num_of_devices = L2K_ETH_NUMBER_OF_DEVICES_DEFAULT;
 #ifdef L2K_ETH_DEBUG_LEVEL
 static unsigned int debug_level = 0;
+#define RACE_D KERN_CRIT
+extern atomic_t g_lte_crash;
 #endif
 #if defined(L2K_ETH_TX_ASYNC) || defined(L2K_ETH_RX_ASYNC)
 static unsigned int queue_max = L2K_ETH_QUEUE_MAX;
@@ -423,6 +425,7 @@ static void l2k_eth_tx_work_release(struct l2k_eth_work *work)
  */
 static struct l2k_eth_work* l2k_eth_tx_work_alloc(void) {
    struct l2k_eth_work* work = NULL;
+
    spin_lock_bh(&l2k_eth_tx_work_lock);
    if (l2k_eth_tx_work_queued >= queue_max) {
       L2K_DBG(2,"l2k_eth_tx_work_alloc(): exceeded limit of TX work queue size");
@@ -638,6 +641,11 @@ static void l2k_eth_rx_task(struct work_struct *pwork)
  struct sk_buff* skb;
  struct net_device *dev;
 
+	 if(atomic_read(&g_lte_crash) == 1)
+	 {
+		 printk(RACE_D "%s(%d) crash=%d\n",__func__,__LINE__,atomic_read(&g_lte_crash));	 
+			return;			
+	 }
    L2K_DBG(5,"l2k_eth_rx_task() called");
    L2K_ETH_PARANOID_WARN_ON(4,pwork == NULL);
    work = container_of(pwork, struct l2k_eth_work, work);
@@ -1244,6 +1252,11 @@ static void l2k_eth_tx_task(struct work_struct *pwork)
  struct sk_buff* skb;
  struct net_device *dev;
    L2K_DBG(5,"l2k_eth_tx_task() called");
+	 if(atomic_read(&g_lte_crash) == 1)
+	 {
+		 printk(RACE_D "%s(%d) crash=%d\n",__func__,__LINE__,atomic_read(&g_lte_crash));	 
+			return;			
+	 }
    L2K_ETH_PARANOID_WARN_ON(4,pwork == NULL);
    work = container_of(pwork, struct l2k_eth_work, work);
    skb = work->skb;
@@ -1267,6 +1280,21 @@ static void l2k_eth_tx_task(struct work_struct *pwork)
    L2K_DBG(5,"l2k_eth_tx_task() returns");
 }
 #endif
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+void l2k_eth_wq_flush(void)
+{
+	cancel_work_sync(&(l2k_eth_rx_work_avail->work));
+	cancel_work_sync(&(l2k_eth_tx_work_avail->work));
+
+	if (l2k_eth_rx_wq)	 {
+		 flush_workqueue(l2k_eth_rx_wq);
+	}
+	if (l2k_eth_tx_wq)	 {
+		 flush_workqueue(l2k_eth_tx_wq);
+	}
+}
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 /** l2k_eth_open
  *  opens network device. Usually it is called as a result of ifconfig up

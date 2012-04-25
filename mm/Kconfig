@@ -147,6 +147,15 @@ config MEMORY_HOTREMOVE
 	depends on MEMORY_HOTPLUG && ARCH_ENABLE_MEMORY_HOTREMOVE
 	depends on MIGRATION
 
+config LGE_MEMORY_HOTPLUG_SET_HIGHMEM_WITH_MOVABLE
+	bool "Allow __GFP_HIGHMEM to __GFP_HIGHMEM | __GFP_MOVABLE"
+	depends on MEMORY_HOTPLUG
+	help
+	 EBI_CSO will be replcated to ZONE_MOVABLE.
+	 Some apks request huge memory but if it is reclaimed only in __GFP_HIGHMEM,
+	 ZONE_NORMAL area will be in charge of it if ZONE_HIGH is not set.
+	 So if memory is requested from __GFP_HIGHMEM, ZONE_MOVABLE area will be searched first.
+
 #
 # If we have space for more page flags then we can enable additional
 # optimizations and functionality.

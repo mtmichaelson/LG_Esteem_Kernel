@@ -105,7 +105,7 @@ struct snd_set_rx_vol_msg {
 };
 struct snd_set_rx_vol_msg rx_vol_msg;
 
-static int current_rx_voice_vol = 100;
+static int current_rx_voice_vol = 300;
 /*******************************************************************************
 *	Function Name :  audio_misc_driver_test
 *	Args : test function ID.
@@ -162,7 +162,7 @@ int audio_misc_driver_test(unsigned int test_fn)
 			break;
 		case TEST_SET_RX_MAX_VOL_PROC:
 			MM_INFO("Testing Maximum RX vol function");
-			current_rx_voice_vol = 100;
+			current_rx_voice_vol = 300;
 			set_rx_voice_volume(QTR_HANDSET_PACKET_LOOPBACK_ID,audio);
 			break;
 		default:
@@ -253,7 +253,7 @@ void* get_bryce_audio_device_data (int iDevId, audio_parameter_type param)
 ********************************************************************************/
 int caliculate_current_rx_vol(int device)
 {	
-	s32 min_rx_vol_nb = -1100,max_rx_vol_nb = 400; //deafult values.
+	s32 min_rx_vol_nb = -1100,max_rx_vol_nb = 1200; //deafult values.
 	int current_rx_vol_mb;
 	void *rx_vol_ptr = NULL;
 
@@ -386,7 +386,7 @@ int caliculate_current_rx_vol(int device)
 	else
 	{
 		MM_ERR("No support for this device\n");
-		current_rx_vol_mb = 100; //default rx vol
+		current_rx_vol_mb = 300; //default rx vol
 	}
 	
 	return current_rx_vol_mb;

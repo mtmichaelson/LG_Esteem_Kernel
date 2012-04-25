@@ -28,6 +28,10 @@
 #include <linux/mmc/sdio_ids.h>
 #endif
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+extern atomic_t g_lte_crash;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 static int sdio_read_fbr(struct sdio_func *func)
 {
 	int ret;
@@ -450,7 +454,12 @@ static void mmc_sdio_detect(struct mmc_host *host)
 #ifdef CONFIG_LTE
 	if (!strcmp(mmc_hostname(host), "mmc0"))
 	{
-		return;
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+		if (atomic_read(&g_lte_crash) == 1)
+			printk(KERN_ALERT"%s(%s): line %d get_lte_crash_status = %d \n",__func__, mmc_hostname(host),__LINE__,atomic_read(&g_lte_crash));
+		else
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */	
+			return;
 	}
 #endif /* CONFIG_LTE */
 	

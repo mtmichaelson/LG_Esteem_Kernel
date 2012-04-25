@@ -241,7 +241,10 @@ typedef struct _LTE_SDIO_INFO {
 	unsigned char flag_gpio_l2k_host_status;
 /* END: 0018522 jaegyu.lee@lge.com 2011-03-24 */
 
-
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	struct wake_lock lte_ioctl_wake_lock;	
+	struct mutex lte_ioctl_lock_mutex;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 } LTE_SDIO_INFO, *PLTE_SDIO_INFO;
 

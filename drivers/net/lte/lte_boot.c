@@ -210,6 +210,11 @@ static const char LTE_PBC[]         = "/etc/lte_images/Normal_pbc.bin";
 #endif
 /* END : daeok.kim@lge.com 20110206 */
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+extern atomic_t g_lte_crash;
+extern void lte_uart_start_request(int value);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 unsigned char LTE_GPR_TEST =0;
 LTE_BOOT_STATUS lte_sdio_boot_PBC(void)
 {
@@ -1216,7 +1221,7 @@ LTE_BOOT_STATUS	lte_sdio_boot(void)
 	
 /*BEGIN: 0013724 daeok.kim@lge.com 2011-01-08 */
 /*ADD 0013724: [LTE] LTE HW Watchdog Timer expired handling is added */
-#ifdef LTE_HW_WDT_RST_TEST
+#if 0 //def LTE_HW_WDT_RST_TEST
   /* Initial setting of LTE HW Wachdog Interrupt GPIO*/
   gpio_request(GPIO_LTE_HW_WDT_RST, "LTE_HW_WD_RST");
   gpio_tlmm_config(GPIO_CFG(GPIO_LTE_HW_WDT_RST, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
@@ -1226,12 +1231,22 @@ LTE_BOOT_STATUS	lte_sdio_boot(void)
 #endif
 /*END: 0013724 daeok.kim@lge.com 2011-01-08 */
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	if(atomic_read(&g_lte_crash) == 1)
+	{
+		lte_uart_start_request(1);
+		LBOOT_ERROR("lte crash occur!!  uart start request!!\n");
+	}
+	else
+		lte_uart_start_request(0);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
   // PBC transfer
   status = lte_sdio_boot_PBC();
   if ( status != LTE_BOOT_NO_ERROR)
   { 	
-  	LBOOT_ERROR("lte_sdio_boot_PBC FAILED!!");
-	LBOOT_ERROR("Error Number = %d", status);
+  	LBOOT_ERROR("lte_sdio_boot_PBC FAILED!!\n");
+	LBOOT_ERROR("Error Number = %d\n", status);
   	return LTE_BOOT_ERROR_PBC;
   }
 
@@ -1239,8 +1254,8 @@ LTE_BOOT_STATUS	lte_sdio_boot(void)
   status = lte_sdio_boot_main_image();
   if ( status != LTE_BOOT_NO_ERROR)
   {  	
-  	LBOOT_ERROR("lte_sdio_boot_main_image FAILED!!");
-	LBOOT_ERROR("Error Number = %d", status);
+  	LBOOT_ERROR("lte_sdio_boot_main_image FAILED!!\n");
+	LBOOT_ERROR("Error Number = %d\n", status);
 	return LTE_BOOT_ERROR_CPU;
   }
 
@@ -1272,6 +1287,10 @@ LTE_BOOT_STATUS	lte_sdio_boot(void)
   
     mdelay(1); // 1ms Unit
   }
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	atomic_set(&g_lte_crash, 0);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
   LBOOT_INFO("LTE HIM_SDIO INIT DONE (0x30)!!Good!!\n");
 
@@ -1308,7 +1327,7 @@ LTE_BOOT_STATUS	lte_sdio_boot(void)
 
 /*BEGIN: 0013724 daeok.kim@lge.com 2011-01-08 */
 /*ADD 0013724: [LTE] LTE HW Watchdog Timer expired handling is added */
-#ifdef LTE_HW_WDT_RST_TEST
+#if 0 //def LTE_HW_WDT_RST_TEST
 	/* Registeration lte hw wdt interrupt and disable irq */
 	for(i=0; i<200; i++)
 	{
@@ -1348,8 +1367,21 @@ static irqreturn_t lte_cb_fcn_rising(int irq, void *dev_id)
 }
 #endif
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+extern int send_lte_crash_noty_packet(void);
+extern void lte_wdt_off(void);
+
+extern PLTE_SDIO_INFO gLte_sdio_info;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 static irqreturn_t lte_cb_fcn_hw_wdt(int irq, void *dev_id)
 {
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	printk("[LTE_HW_WDT] %s (%d) \n",__func__,__LINE__);
+	return IRQ_HANDLED;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
+
 #ifdef LG_FW_COMPILE_ERROR
 	unsigned char *error_log_lte_hw_wdt;
 
@@ -1384,21 +1416,24 @@ static irqreturn_t lte_cb_fcn_hw_wdt(int irq, void *dev_id)
 	kfree(error_log_lte_hw_wdt);
 	return IRQ_HANDLED;
 #else
-#if defined (LTE_HW_WDT_RST_TEST) && defined (CONFIG_LGE_LTE_ERS)
+#if  0 //defined (LTE_HW_WDT_RST_TEST) && defined (CONFIG_LGE_LTE_ERS)
 	unsigned char *error_log_lte_hw_wdt;
 #endif
+
 	/* 1st IRQ Skip process: WORK AROUND*/
 	if(gpio_get_value(GPIO_LTE_HW_WDT_RST) ==1)
 	{
 		printk("[LTE_HW_WDT] Skip 1st IRQ!!, GPIO_2 value = %d \n",gpio_get_value(2));
+#if 0 //def CONFIG_LGE_LTE_CRASH_RECOVERY
 		return IRQ_HANDLED;
+#endif 
 	}
 
 /* BEGIN: 0018470 jaegyu.lee@lge.com 2011-03-23 */
 /* MOD 0018470 : [LTE] LTE ASSERT CASE report available in SDIO not working */
 	if(gpio_get_value(GPIO_L2K_LTE_STATUS) ==1)
 	{
-#if defined (LTE_HW_WDT_RST_TEST) && defined (CONFIG_LGE_LTE_ERS)
+#if 0 //defined (LTE_HW_WDT_RST_TEST) && defined (CONFIG_LGE_LTE_ERS)
 		error_log_lte_hw_wdt = kzalloc(LTE_WDT_LOG_SIZE, GFP_KERNEL);
 		error_log_lte_hw_wdt = "LTE assert! But receiving asset log has failed!\n";
 #endif
@@ -1407,7 +1442,7 @@ static irqreturn_t lte_cb_fcn_hw_wdt(int irq, void *dev_id)
 	}
 	else
 	{		
-#if defined (LTE_HW_WDT_RST_TEST) && defined (CONFIG_LGE_LTE_ERS)
+#if 0 //defined (LTE_HW_WDT_RST_TEST) && defined (CONFIG_LGE_LTE_ERS)
 		error_log_lte_hw_wdt = kzalloc(LTE_WDT_LOG_SIZE, GFP_KERNEL); // LTE_WDT_LOG_SIZE =50
 		error_log_lte_hw_wdt = "LTE HW WDT RST is activated!!"; // You can loot at this message in data/lte_ers_panic
 #endif
@@ -1418,10 +1453,17 @@ static irqreturn_t lte_cb_fcn_hw_wdt(int irq, void *dev_id)
 	}
 /* END: 0018470 jaegyu.lee@lge.com 2011-03-23 */
 	/* Device reset activation*/
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+	lte_wdt_off();
+
+		send_lte_crash_noty_packet();
+#else
 #if defined (LTE_HW_WDT_RST_TEST) && defined (CONFIG_LGE_LTE_ERS)
 	lte_crash_log(error_log_lte_hw_wdt, LTE_WDT_LOG_SIZE, Reserved_LTE_WDT_RST);
 	kfree(error_log_lte_hw_wdt);
 #endif
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 	return IRQ_HANDLED;
 #endif /* LG_FW_COMPILE_ERROR */
 }

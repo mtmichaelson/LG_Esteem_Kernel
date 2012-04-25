@@ -63,6 +63,13 @@ extern int lte_crash_log_dump(void *buffer, unsigned int size, unsigned int file
 /* END: 0013575 seongmook.yim@lge.com 2011-01-05 */   
 #endif /* LG_FW_COMPILE_ERROR */
 
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+int send_lte_crash_noty_packet(void);
+extern void set_lte_crash_status(int value);
+extern int get_lte_crash_status(void);
+extern void lte_wdt_off(void);
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */		
+
 static unsigned int lte_him_calc_dummy(unsigned int packet_size)
 {
 	unsigned int temp_align, dummy_size, total_packet_size = 0;
@@ -717,6 +724,11 @@ int lte_him_parsing_blk(void)
 /* ADD 0013575: [LTE] LTE S/W assert case handling */
 	else if(him_blk_type == HIM_BLOCK_ERROR)
 	{
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+		LTE_ERROR("LTE Crash HIM_BLOCK_ERROR \n");	
+		return 0;
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */		
+
 		/* LTE error handling */
 		//printk("[LTE_ASSERT] LTE S/W Assert Case\n");
 /*BEGIN: 0017497 daeok.kim@lge.com 2011-03-05 */
@@ -832,6 +844,25 @@ int lte_him_parsing_blk(void)
 err:
 	return error;
 }
+
+#ifdef CONFIG_LGE_LTE_CRASH_RECOVERY
+extern void store_lte_crash_time(void);
+
+int send_lte_crash_noty_packet(void)
+{	
+	lte_hi_command_header lte_cmd_header;
+	lte_cmd_header.cmd = 0xDEAD;
+	lte_cmd_header.len = 4;	
+
+	tty_insert_flip_string(gLte_sdio_info->tty,&lte_cmd_header, 4);
+	tty_flip_buffer_push(gLte_sdio_info->tty);
+
+	LTE_ERROR("%s : Crash cmd 0x%x len = %d\n",__func__, lte_cmd_header.cmd,lte_cmd_header.len);
+	store_lte_crash_time();
+
+	return 0;
+}
+#endif /* CONFIG_LGE_LTE_CRASH_RECOVERY */
 
 EXPORT_SYMBOL(lte_him_register_cb_from_ved);
 EXPORT_SYMBOL(lte_him_enqueue_ip_packet);

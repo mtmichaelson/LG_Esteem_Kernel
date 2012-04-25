@@ -940,6 +940,20 @@ config MSM_RMT_STORAGE_CLIENT_STATS
 	  Collects performance statistics and shows this information
 	  through a debugfs file rmt_storage_stats.
 
+config LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+	depends on MSM_RMT_STORAGE_CLIENT
+	default n
+	bool "Remote Storage RPC client patch for error handling"
+	help
+	  Provide error handling code in case no response from rmt_storage daemon.
+
+config LGE_MSM_RMT_STORAGE_CLIENT_PATCH_TEST
+	depends on LGE_MSM_RMT_STORAGE_CLIENT_PATCH
+	default n
+	bool "Remote Storage RPC client patch test for error handling"
+	help
+	  Provide error handling test in case no response from rmt_storage daemon.
+	  
 config MSM_SDIO_SMEM
         depends on MSM_SDIO_AL
         default n
